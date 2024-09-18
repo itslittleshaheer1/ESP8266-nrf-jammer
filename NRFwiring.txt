@@ -1,10 +1,13 @@
-NRF24L01 Module          ESP8266 (Wiring)
------------------        ------------------
-         GND  <---->      GND (Ground)
-         VCC  <---->      3V (3.3V Power)
-         CE   <---->      D1 (GPIO5)
-         CSN  <---->      D2 (GPIO4)
-         SCK  <---->      D6 (GPIO12)
-         MISO <---->      D5 (GPIO14)
-         MOSI <---->      D7 (GPIO13)
-         IRQ  <---->      D4 
+   NRF24L01 Module
+   +---------------+
+   |               |
+   |       VCC ----> 3.3V
+   |       GND ----> GND
+   |       CE  ----> D1
+   |       CSN ----> D2
+   |       SCK ----> D5
+   |       MOSI ---> D7
+   |       MISO ---> D6
+   |       IRQ ----> D4 (optional, used for interrupt)
+   |               |
+   +---------------+

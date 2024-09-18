@@ -1,4 +1,4 @@
-   NRF24L01 Module
+      NRF24L01 Module
    +---------------+
    |               |
    |       VCC ----> 3.3V
@@ -11,3 +11,4 @@
    |       IRQ ----> D4 (optional, used for interrupt)
    |               |
    +---------------+
+made by littleshaheerswabi

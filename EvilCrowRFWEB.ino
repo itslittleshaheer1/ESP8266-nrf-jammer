@@ -19,6 +19,11 @@ bool isJamming = false;
 bool isScanning = false;
 uint8_t detectedDevices[32];  // Array to store detected devices on each channel
 
+// Jamming parameters
+unsigned long jammingDuration = 10000;  // Jamming duration in milliseconds
+unsigned long jammingInterval = 5000;   // Interval between jamming sessions
+unsigned long previousMillis = 0;
+
 void setup() {
   Serial.begin(115200);
 
@@ -29,9 +34,15 @@ void setup() {
     Serial.println("NRF24L01 initialized.");
   }
 
-  // Set up radio parameters
-  radio.setPALevel(RF24_PA_LOW);  // Low power
-  radio.setDataRate(RF24_1MBPS);  // Standard data rate
+  // Set up radio parameters for jamming
+  radio.setAutoAck(false);  // Disable acknowledgments
+  radio.stopListening();    // Stop listening for responses
+  radio.setRetries(0, 0);   // No retries
+  radio.setPayloadSize(1);  // Minimal payload size
+  radio.setAddressWidth(3); // Set address width
+  radio.setPALevel(RF24_PA_MAX); // Set max power level for jamming
+  radio.setDataRate(RF24_2MBPS); // High data rate for effective jamming
+  radio.setCRCLength(RF24_CRC_DISABLED); // Disable CRC for raw transmission
 
   // Start Wi-Fi Access Point
   WiFi.softAP(ssid, password);
@@ -54,11 +65,20 @@ void setup() {
 
 void loop() {
   server.handleClient();
+  unsigned long currentMillis = millis();
+
+  // Manage jamming intervals
+  if (currentMillis - previousMillis >= jammingInterval) {
+    previousMillis = currentMillis;
+    if (isJamming) {
+      Serial.println("Jamming Started");
+      jamChannel();  // Start jamming
+      delay(jammingDuration);  // Jam for a set duration
+    }
+  }
+
   if (isScanning) {
     scanDevices();  // Perform the device scanning in real-time
-  }
-  if (isJamming) {
-    jamChannel();  // Jam the channel in real-time
   }
 }
 
@@ -209,7 +229,9 @@ void jamChannel() {
   for (int i = 0; i < 32; i++) {
     radio.setChannel(i);  // Set to the next channel
     radio.stopListening();  // Stop listening to transmit noise
-    radio.write("noise", sizeof("noise"));  // Send out noise
-    delay(5);  // Keep moving to prevent being detected
+    radio.write("JAMMING_PAYLOAD", sizeof("JAMMING_PAYLOAD"));  // Send out noise
+    delay(random(5, 20));  // Random delay
+    radio.write("", 0);  // Send silence
+    delay(random(5, 20));  // Random delay before next transmission
   }
 }

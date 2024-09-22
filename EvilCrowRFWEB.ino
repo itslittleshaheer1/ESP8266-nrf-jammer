@@ -14,18 +14,10 @@ RF24 radio(D1, D2);
 // Web server setup
 ESP8266WebServer server(80);
 
-// Variables
+// Variables for scanning and jamming
 bool isJamming = false;
 bool isScanning = false;
-char capturedSignal[32] = {0};  // Store captured signal
-String capturedSignalHex = "";
-
-// Status Update Struct
-struct {
-  bool jamming;
-  bool scanning;
-  String signal;
-} status = {false, false, ""};
+uint8_t detectedDevices[32];  // Array to store detected devices on each channel
 
 void setup() {
   Serial.begin(115200);
@@ -37,9 +29,9 @@ void setup() {
     Serial.println("NRF24L01 initialized.");
   }
 
-  // Configure NRF24L01 for optimized power and range
+  // Set up radio parameters
   radio.setPALevel(RF24_PA_LOW);  // Low power
-  radio.setDataRate(RF24_250KBPS);  // Extended range
+  radio.setDataRate(RF24_1MBPS);  // Standard data rate
 
   // Start Wi-Fi Access Point
   WiFi.softAP(ssid, password);
@@ -49,12 +41,11 @@ void setup() {
 
   // Set up web server routes
   server.on("/", handleRoot);
-  server.on("/status", handleStatus);  // New route for status updates
+  server.on("/status", handleStatus);  // Status of scanning and jamming
   server.on("/start_jamming", handleStartJamming);
   server.on("/stop_jamming", handleStopJamming);
   server.on("/start_scanning", handleStartScanning);
   server.on("/stop_scanning", handleStopScanning);
-  server.on("/replay_signal", handleReplaySignal);
 
   // Start the web server
   server.begin();
@@ -63,9 +54,15 @@ void setup() {
 
 void loop() {
   server.handleClient();
+  if (isScanning) {
+    scanDevices();  // Perform the device scanning in real-time
+  }
+  if (isJamming) {
+    jamChannel();  // Jam the channel in real-time
+  }
 }
 
-// Function to serve the web interface
+// Serve the web page
 void handleRoot() {
   String html = R"rawliteral(
   <!DOCTYPE html>
@@ -122,10 +119,10 @@ void handleRoot() {
             .then(response => response.json())
             .then(data => {
               document.getElementById("status").innerHTML = "Status: " + (data.jamming ? "Jamming" : (data.scanning ? "Scanning" : "Idle"));
-              document.getElementById("signal").innerHTML = "Captured Signal: " + data.signal;
+              document.getElementById("devices").innerHTML = "Detected Devices: " + data.devices;
             });
         }
-        setInterval(updateStatus, 2000);
+        setInterval(updateStatus, 2000);  // Real-time updates every 2 seconds
       </script>
   </head>
   <body onload="updateStatus()">
@@ -134,12 +131,11 @@ void handleRoot() {
       </header>
       <div class="container">
           <p id="status">Status: Idle</p>
-          <p id="signal">Captured Signal: None</p>
+          <p id="devices">Detected Devices: None</p>
           <button class="btn" onclick="window.location.href='/start_jamming'">Start Jamming</button><br>
           <button class="btn" onclick="window.location.href='/stop_jamming'">Stop Jamming</button><br>
           <button class="btn" onclick="window.location.href='/start_scanning'">Start Scanning</button><br>
           <button class="btn" onclick="window.location.href='/stop_scanning'">Stop Scanning</button><br>
-          <button class="btn" onclick="window.location.href='/replay_signal'">Replay Signal</button><br>
       </div>
       <div class="footer">
           <p>&copy; 2024 EvilCrow RF</p>
@@ -156,69 +152,64 @@ void handleStatus() {
   StaticJsonDocument<200> doc;
   doc["jamming"] = isJamming;
   doc["scanning"] = isScanning;
-  doc["signal"] = capturedSignalHex;
-  
+  String detectedDevicesStr = "";
+  for (int i = 0; i < 32; i++) {
+    if (detectedDevices[i] > 0) {
+      detectedDevicesStr += "Channel " + String(i + 1) + ": " + String(detectedDevices[i]) + " devices<br>";
+    }
+  }
+  doc["devices"] = detectedDevicesStr;
+
   String json;
   serializeJson(doc, json);
   server.send(200, "application/json", json);
 }
 
-// Function to capture and convert signal to hex
-void captureSignal() {
-  if (radio.available()) {
-    radio.read(&capturedSignal, sizeof(capturedSignal));
-    
-    // Convert captured signal to hex string
-    capturedSignalHex = "";
-    for (int i = 0; i < sizeof(capturedSignal); i++) {
-      char hex[3]; // 2 characters for hex + 1 for null terminator
-      sprintf(hex, "%02X", capturedSignal[i]);
-      capturedSignalHex += hex;
-    }
-    
-    Serial.println("Signal Captured: " + capturedSignalHex);
-  }
-}
-
-// Start jamming function
+// Function to start jamming
 void handleStartJamming() {
   isJamming = true;
   server.send(200, "text/plain", "Jamming Started");
   Serial.println("Jamming Started");
 }
 
-// Stop jamming function
+// Function to stop jamming
 void handleStopJamming() {
   isJamming = false;
   server.send(200, "text/plain", "Jamming Stopped");
   Serial.println("Jamming Stopped");
 }
 
-// Start scanning function
+// Function to start scanning for devices
 void handleStartScanning() {
   isScanning = true;
   server.send(200, "text/plain", "Scanning Started");
   Serial.println("Scanning Started");
-
-  while (isScanning) {
-    captureSignal(); // Capture signals
-  }
 }
 
-// Stop scanning function
+// Function to stop scanning for devices
 void handleStopScanning() {
   isScanning = false;
   server.send(200, "text/plain", "Scanning Stopped");
   Serial.println("Scanning Stopped");
 }
 
-// Function to replay captured signal
-void handleReplaySignal() {
-  if (capturedSignalHex.length() > 0) {
-    radio.write(&capturedSignal, sizeof(capturedSignal));
-    server.send(200, "text/plain", "Signal Replayed");
-    Serial.println("Signal Replayed: " + capturedSignalHex);
-  } else {
-    server.send(200, "text/plain", "No Signal to Replay");
+// Function to scan devices on each channel
+void scanDevices() {
+  for (int i = 0; i < 32; i++) {
+    radio.setChannel(i);  // Set the radio to each channel
+    delay(10);  // Wait for traffic
+    if (radio.available()) {
+      detectedDevices[i]++;  // Increment the device count for that channel
+    }
+  }
+}
+
+// Function to jam the currently set channel
+void jamChannel() {
+  for (int i = 0; i < 32; i++) {
+    radio.setChannel(i);  // Set to the next channel
+    radio.stopListening();  // Stop listening to transmit noise
+    radio.write("noise", sizeof("noise"));  // Send out noise
+    delay(5);  // Keep moving to prevent being detected
   }
 }

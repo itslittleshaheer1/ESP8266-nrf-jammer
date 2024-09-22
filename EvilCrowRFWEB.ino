@@ -94,16 +94,18 @@ void handleRoot() {
       <style>
           body {
               font-family: Arial, sans-serif;
-              text-align: center;
               background-color: #1e1e1e;
               color: white;
               margin: 0;
               padding: 0;
+              display: flex;
           }
           header {
               padding: 10px;
               background-color: #333;
               color: #f1f1f1;
+              width: 100%;
+              text-align: center;
           }
           h1 {
               margin: 0;
@@ -111,6 +113,14 @@ void handleRoot() {
           }
           .container {
               padding: 30px;
+              width: 70%;
+          }
+          .sidebar {
+              padding: 30px;
+              width: 30%;
+              background-color: #333;
+              height: 100vh;
+              overflow-y: auto;
           }
           .btn {
               padding: 15px 30px;
@@ -132,6 +142,14 @@ void handleRoot() {
               background-color: #333;
               color: #f1f1f1;
           }
+          .device-list {
+              list-style-type: none;
+              padding: 0;
+          }
+          .device-list li {
+              margin-bottom: 10px;
+              font-size: 18px;
+          }
       </style>
       <script>
         function updateStatus() {
@@ -139,7 +157,7 @@ void handleRoot() {
             .then(response => response.json())
             .then(data => {
               document.getElementById("status").innerHTML = "Status: " + (data.jamming ? "Jamming" : (data.scanning ? "Scanning" : "Idle"));
-              document.getElementById("devices").innerHTML = "Detected Devices: " + data.devices;
+              document.getElementById("devices").innerHTML = data.devices;
             });
         }
         setInterval(updateStatus, 2000);  // Real-time updates every 2 seconds
@@ -151,14 +169,16 @@ void handleRoot() {
       </header>
       <div class="container">
           <p id="status">Status: Idle</p>
-          <p id="devices">Detected Devices: None</p>
           <button class="btn" onclick="window.location.href='/start_jamming'">Start Jamming</button><br>
           <button class="btn" onclick="window.location.href='/stop_jamming'">Stop Jamming</button><br>
           <button class="btn" onclick="window.location.href='/start_scanning'">Start Scanning</button><br>
           <button class="btn" onclick="window.location.href='/stop_scanning'">Stop Scanning</button><br>
       </div>
-      <div class="footer">
-          <p>&copy; 2024 EvilCrow RF</p>
+      <div class="sidebar">
+          <h2>Detected Devices</h2>
+          <ul id="devices" class="device-list">
+              <li>No devices detected</li>
+          </ul>
       </div>
   </body>
   </html>
@@ -167,18 +187,19 @@ void handleRoot() {
   server.send(200, "text/html", html);
 }
 
-// Function to provide real-time status
+// Function to provide real-time status and devices list
 void handleStatus() {
-  StaticJsonDocument<200> doc;
+  StaticJsonDocument<500> doc;
   doc["jamming"] = isJamming;
   doc["scanning"] = isScanning;
-  String detectedDevicesStr = "";
+  String devicesList = "<ul class='device-list'>";
   for (int i = 0; i < 32; i++) {
     if (detectedDevices[i] > 0) {
-      detectedDevicesStr += "Channel " + String(i) + ": " + String(detectedDevices[i]) + " devices<br>";
+      devicesList += "<li>Channel " + String(i) + ": " + String(detectedDevices[i]) + " devices</li>";
     }
   }
-  doc["devices"] = detectedDevicesStr;
+  devicesList += "</ul>";
+  doc["devices"] = devicesList;
 
   String json;
   serializeJson(doc, json);

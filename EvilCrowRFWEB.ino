@@ -175,7 +175,7 @@ void handleStatus() {
   String detectedDevicesStr = "";
   for (int i = 0; i < 32; i++) {
     if (detectedDevices[i] > 0) {
-      detectedDevicesStr += "Channel " + String(i + 1) + ": " + String(detectedDevices[i]) + " devices<br>";
+      detectedDevicesStr += "Channel " + String(i) + ": " + String(detectedDevices[i]) + " devices<br>";
     }
   }
   doc["devices"] = detectedDevicesStr;
@@ -202,6 +202,7 @@ void handleStopJamming() {
 // Function to start scanning for devices
 void handleStartScanning() {
   isScanning = true;
+  memset(detectedDevices, 0, sizeof(detectedDevices));  // Clear the detected devices array
   server.send(200, "text/plain", "Scanning Started");
   Serial.println("Scanning Started");
 }

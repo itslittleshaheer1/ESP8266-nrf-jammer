@@ -1,231 +1,106 @@
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
+#include <Arduino.h>
 #include <SPI.h>
 #include <RF24.h>
-#include <ArduinoJson.h>
 
-// Wi-Fi credentials
-const char* ssid = "EvilCrowRF";
-const char* password = "12345678";
+// Pin configuration for NRF24L01 on ESP8266
+#define CE_PIN D1
+#define CSN_PIN D2
+#define IRQ_PIN D4  // IRQ Pin for NRF24L01
 
-// NRF24L01 setup: CE -> D1, CSN -> D2
-RF24 radio(D1, D2);
+RF24 radio(CE_PIN, CSN_PIN);  // CE -> D1, CSN -> D2
 
-// Web server setup
-ESP8266WebServer server(80);
+// Addresses for communication
+const byte address[6] = "00001";
 
-// Variables for scanning and jamming
-bool isJamming = false;
-bool isScanning = false;
-uint8_t detectedDevices[32];  // Array to store detected devices on each channel
+// Timing variables for sending messages
+unsigned long lastSend = 0;
+unsigned int sendDelay = 10; // Delay between jamming signals (10 ms)
+unsigned long lastJam = 0;
+unsigned int jamDelay = 10; // Jamming every 10 ms
 
-// Jamming parameters
-unsigned long jammingDuration = 10000;  // Jamming duration in milliseconds
-unsigned long jammingInterval = 5000;   // Interval between jamming sessions
-unsigned long previousMillis = 0;
+volatile bool dataReceived = false;
+
+// Interrupt handler for incoming data on IRQ pin
+void ICACHE_RAM_ATTR handleIRQ() {
+    if (radio.available()) {
+        dataReceived = true;  // Mark that data has been received
+    }
+}
 
 void setup() {
-  Serial.begin(115200);
+    // Initialize Serial for debugging
+    Serial.begin(9600);
+    Serial.println("Initializing NRF24L01...");
 
-  // Start NRF24L01
-  if (!radio.begin()) {
-    Serial.println("NRF24L01 initialization failed!");
-  } else {
-    Serial.println("NRF24L01 initialized.");
-  }
+    // Initialize the NRF24L01 radio
+    if (!radio.begin()) {
+        Serial.println("NRF24L01 initialization failed!");
+        while (1);
+    }
 
-  // Set up radio parameters
-  radio.setPALevel(RF24_PA_MAX);  // Maximum power
-  radio.setDataRate(RF24_250KBPS);  // Lower data rate for better range
+    radio.setPALevel(RF24_PA_MAX);      // Set power level to max for jamming
+    radio.setDataRate(RF24_2MBPS);      // Set data rate to 2 Mbps for faster communication
+    radio.setRetries(0, 0);             // Disable retries
+    radio.setPayloadSize(32);           // Set the payload size to 32 bytes
+    radio.setAutoAck(false);            // Disable Auto-Acknowledgment
+    radio.openWritingPipe(address);     // Set the address for transmission
+    radio.openReadingPipe(1, address);  // Set the address for receiving
+    radio.startListening();             // Start in listening mode
 
-  // Start Wi-Fi Access Point
-  WiFi.softAP(ssid, password);
-  Serial.println("Access Point Created");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.softAPIP());
+    // Attach interrupt to the IRQ pin (D4)
+    attachInterrupt(digitalPinToInterrupt(IRQ_PIN), handleIRQ, FALLING);
 
-  // Set up web server routes
-  server.on("/", handleRoot);
-  server.on("/status", handleStatus);  // Status of scanning and jamming
-  server.on("/start_jamming", handleStartJamming);
-  server.on("/stop_jamming", handleStopJamming);
-  server.on("/start_scanning", handleStartScanning);
-  server.on("/stop_scanning", handleStopScanning);
-
-  // Start the web server
-  server.begin();
-  Serial.println("Server started");
+    Serial.println("NRF24L01 initialized with IRQ.");
 }
 
 void loop() {
-  server.handleClient();
-  unsigned long currentMillis = millis();
+    unsigned long now = millis();
 
-  // Manage jamming intervals
-  if (currentMillis - previousMillis >= jammingInterval) {
-    previousMillis = currentMillis;
-    if (isJamming) {
-      Serial.println("Jamming Started");
-      jamChannel();  // Start jamming
-      delay(jammingDuration);  // Jam for a set duration
-    }
-  }
+    // Jamming process
+    if (now > lastJam + jamDelay) {
+        lastJam = now;
 
-  if (isScanning) {
-    scanDevices();  // Perform the device scanning in real-time
-  }
-}
+        // Stop listening to transmit noise
+        radio.stopListening();
 
-// Serve the web page
-void handleRoot() {
-  String html = R"rawliteral(
-  <!DOCTYPE html>
-  <html lang="en">
-  <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>EvilCrow RF Control</title>
-      <style>
-          body {
-              font-family: Arial, sans-serif;
-              text-align: center;
-              background-color: #1e1e1e;
-              color: white;
-              margin: 0;
-              padding: 0;
-          }
-          header {
-              padding: 10px;
-              background-color: #333;
-              color: #f1f1f1;
-          }
-          h1 {
-              margin: 0;
-              padding: 20px;
-          }
-          .container {
-              padding: 30px;
-          }
-          .btn {
-              padding: 15px 30px;
-              font-size: 18px;
-              margin: 10px;
-              color: white;
-              background-color: #555;
-              border: none;
-              border-radius: 5px;
-              cursor: pointer;
-              transition: background-color 0.3s;
-          }
-          .btn:hover {
-              background-color: #f44336;
-          }
-          .footer {
-              margin-top: 50px;
-              padding: 20px;
-              background-color: #333;
-              color: #f1f1f1;
-          }
-      </style>
-      <script>
-        function updateStatus() {
-          fetch("/status")
-            .then(response => response.json())
-            .then(data => {
-              document.getElementById("status").innerHTML = "Status: " + (data.jamming ? "Jamming" : (data.scanning ? "Scanning" : "Idle"));
-              document.getElementById("devices").innerHTML = "Detected Devices: " + data.devices;
-            });
+        // Send out noise (for jamming)
+        const char *jamSignal = "JAM"; // Simple jamming signal
+        bool success = radio.write(jamSignal, sizeof(jamSignal));
+
+        if (success) {
+            Serial.println("Jamming signal sent.");
         }
-        setInterval(updateStatus, 2000);  // Real-time updates every 2 seconds
-      </script>
-  </head>
-  <body onload="updateStatus()">
-      <header>
-          <h1>EvilCrow RF Control Panel</h1>
-      </header>
-      <div class="container">
-          <p id="status">Status: Idle</p>
-          <p id="devices">Detected Devices: None</p>
-          <button class="btn" onclick="window.location.href='/start_jamming'">Start Jamming</button><br>
-          <button class="btn" onclick="window.location.href='/stop_jamming'">Stop Jamming</button><br>
-          <button class="btn" onclick="window.location.href='/start_scanning'">Start Scanning</button><br>
-          <button class="btn" onclick="window.location.href='/stop_scanning'">Stop Scanning</button><br>
-      </div>
-      <div class="footer">
-          <p>&copy; 2024 EvilCrow RF</p>
-      </div>
-  </body>
-  </html>
-  )rawliteral";
 
-  server.send(200, "text/html", html);
-}
-
-// Function to provide real-time status
-void handleStatus() {
-  StaticJsonDocument<200> doc;
-  doc["jamming"] = isJamming;
-  doc["scanning"] = isScanning;
-  String detectedDevicesStr = "";
-  for (int i = 0; i < 32; i++) {
-    if (detectedDevices[i] > 0) {
-      detectedDevicesStr += "Channel " + String(i + 1) + ": " + String(detectedDevices[i]) + " devices<br>";
+        // Return to listening mode
+        radio.startListening();
     }
-  }
-  doc["devices"] = detectedDevicesStr;
 
-  String json;
-  serializeJson(doc, json);
-  server.send(200, "application/json", json);
-}
+    // Transmit data every `sendDelay` milliseconds
+    if (now > lastSend + sendDelay) {
+        lastSend = now;
+        const char *message = "hello world";
 
-// Function to start jamming
-void handleStartJamming() {
-  isJamming = true;
-  server.send(200, "text/plain", "Jamming Started");
-  Serial.println("Jamming Started");
-}
+        // Stop listening and send the message
+        radio.stopListening();
+        bool success = radio.write(message, sizeof(message));
+        
+        if (success) {
+            Serial.println("Sent: " + String(message));
+        } else {
+            Serial.println("Failed to send message");
+        }
 
-// Function to stop jamming
-void handleStopJamming() {
-  isJamming = false;
-  server.send(200, "text/plain", "Jamming Stopped");
-  Serial.println("Jamming Stopped");
-}
-
-// Function to start scanning for devices
-void handleStartScanning() {
-  isScanning = true;
-  server.send(200, "text/plain", "Scanning Started");
-  Serial.println("Scanning Started");
-}
-
-// Function to stop scanning for devices
-void handleStopScanning() {
-  isScanning = false;
-  server.send(200, "text/plain", "Scanning Stopped");
-  Serial.println("Scanning Stopped");
-}
-
-// Function to scan devices on each channel
-void scanDevices() {
-  for (int i = 0; i < 32; i++) {
-    radio.setChannel(i);  // Set the radio to each channel
-    delay(10);  // Wait for traffic
-    if (radio.available()) {
-      detectedDevices[i]++;  // Increment the device count for that channel
+        // Go back to listening mode
+        radio.startListening();
     }
-  }
-}
 
-// Function to jam the currently set channel
-void jamChannel() {
-  for (int i = 0; i < 32; i++) {
-    radio.setChannel(i);  // Set to the next channel
-    radio.stopListening();  // Stop listening to transmit noise
-    radio.write("JAMMING_PAYLOAD", sizeof("JAMMING_PAYLOAD"));  // Send out noise
-    delay(random(5, 20));  // Random delay
-    radio.write("", 0);  // Send silence
-    delay(random(5, 20));  // Random delay before next transmission
-  }
+    // If data was received via IRQ, process it
+    if (dataReceived) {
+        dataReceived = false;  // Reset the flag
+        char receivedMessage[32] = {0};
+        
+        // Read the message from the radio
+        radio.read(&receivedMessage, sizeof(receivedMessage));
+        Serial.println("Received: " + String(receivedMessage));
+    }
 }

@@ -1,66 +1,116 @@
 #include <SPI.h>
 #include <nRF24L01.h>
 #include <RF24.h>
-#include <ESP8266WiFi.h>
 
-// Define the ESP8266-specific SPI pins
-#define SCK_PIN D5
-#define MOSI_PIN D7
-#define MISO_PIN D6
+#define CE  1
+RF24 radio(1, 2);
 
-// Define the CE and CSN pins for the radios
-RF24 radio(D1, D2); // CE, CSN for radio
-RF24 radio2(D1, D2); // CE, CSN for radio2
-RF24 radio3(D1, D2); // CE, CSN for radio3
+#define CHANNELS  80 // Cover the entire 2.4GHz band
+int channel[CHANNELS];
 
-void setup() {
-  // Initialize the ESP8266-specific SPI pins
-  pinMode(SCK_PIN, OUTPUT);
-  pinMode(MOSI_PIN, OUTPUT);
-  pinMode(MISO_PIN, INPUT);
+int line;
 
-  // Initialize the radios
+const uint8_t num_channels = 80;
+int values[num_channels];
+int channels = 0;
+const byte address[6] = "00001";
+const int num_reps = 50;
+bool jamming = true;
+
+void setup()
+{
+  Serial.begin(57600);
+
   radio.begin();
-  radio2.begin();
-  radio3.begin();
-
-  // Power down the radios initially
-  radio.powerDown();
-  radio2.powerDown();
-  radio3.powerDown();
-  delay(1000);
-
-  // Setup radio 1
-  radio.powerUp();
-  radio.setAutoAck(false);  // Very important setting
-  radio.setPALevel(RF24_PA_HIGH);
-  radio.setDataRate(RF24_2MBPS);
+  radio.startListening();
   radio.stopListening();
-  radio.setChannel(80);
-  delay(1000);
 
-  // Setup radio 2
-  radio2.powerUp();
-  radio2.setAutoAck(false);
-  radio2.setPALevel(RF24_PA_HIGH);
-  radio2.setDataRate(RF24_2MBPS);
-  radio2.stopListening();
-  radio2.setChannel(26);
-  delay(1000);
+  SPI.begin();
+  SPI.setDataMode(SPI_MODE0);
+  SPI.setClockDivider(SPI_CLOCK_DIV2);
+  SPI.setBitOrder(MSBFIRST);
 
-  // Setup radio 3
-  radio3.powerUp();
-  radio3.setAutoAck(false);
-  radio3.setPALevel(RF24_PA_HIGH);
-  radio3.setDataRate(RF24_2MBPS);
-  radio3.stopListening();
-  radio3.setChannel(2);
-  delay(1000);
+  pinMode(CE, OUTPUT);
+  disable();
+
+  powerUp();
+
+#define _NRF24_EN_AA 0x01
+#define _NRF24_CONFIG 0x00
+#define _NRF24_RF_SETUP 0x06
+#define _NRF24_RPD 0x09
+
+  Serial.println("Starting Jamming...");
 }
 
-void loop() {
-  byte text = 255; // just some random string
-  radio.writeFast(&text, sizeof(text));
-  radio3.writeFast(&text, sizeof(text));
-  radio2.writeFast(&text, sizeof(text));
+void setRegister(byte r, byte v)
+{
+  digitalWrite(CE, LOW); // Use digitalWrite instead of manipulating PORTB
+  SPI.transfer((r & 0x1F) | 0x20);
+  SPI.transfer(v);
+  digitalWrite(CE, HIGH); // Use digitalWrite instead of manipulating PORTB
+}
+
+byte getRegister(byte r) {
+  digitalWrite(CE, LOW); // Use digitalWrite instead of manipulating PORTB
+  SPI.transfer((r & 0x1F) | 0x00); // Note the 0x00 instead of 0x20
+  byte v = SPI.transfer(0x00); // Send a dummy byte to receive the value
+  digitalWrite(CE, HIGH); // Use digitalWrite instead of manipulating PORTB
+  return v;
+}
+
+void powerUp(void)
+{
+  setRegister(_NRF24_CONFIG, getRegister(_NRF24_CONFIG) | 0x02);
+  delayMicroseconds(130);
+}
+
+void powerDown(void)
+{
+  setRegister(_NRF24_CONFIG, getRegister(_NRF24_CONFIG) & ~0x02);
+}
+
+void enable(void)
+{
+  digitalWrite(CE, HIGH); // Use digitalWrite instead of manipulating PORTB
+}
+
+void disable(void)
+{
+  digitalWrite(CE, LOW); // Use digitalWrite instead of manipulating PORTB
+}
+
+void setRX(void)
+{
+  setRegister(_NRF24_CONFIG, getRegister(_NRF24_CONFIG) | 0x01);
+  enable();
+
+  delayMicroseconds(100);
+}
+
+void jammer() {
+  const int channels = 80; // Cover the entire 2.4GHz band
+  const int frequency_step = 5; // Use a 5MHz frequency step
+
+  for (int i = 0; i < channels; i++) {
+    int frequency = 2400 + (i * frequency_step); // Calculate the frequency
+    radio.setChannel(frequency);
+    radio.setPALevel(RF24_PA_HIGH); // Set the transmission power to high
+
+    // Generate a pseudorandom noise (PN) sequence
+    uint8_t pn_sequence[32];
+    for (int j = 0; j < 32; j++) {
+      pn_sequence[j] = (uint8_t)random(256);
+    }
+
+    // Transmit the PN sequence
+    radio.write(pn_sequence, 32);
+    delayMicroseconds(10);
+  }
+}
+
+void loop()
+{
+  jammer();
+  delay(100);
 }

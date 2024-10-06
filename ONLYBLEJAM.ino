@@ -51,6 +51,14 @@ void setRegister(byte r, byte v)
   digitalWrite(CE, HIGH); // Use digitalWrite instead of manipulating PORTB
 }
 
+byte getRegister(byte r) {
+  digitalWrite(CE, LOW); // Use digitalWrite instead of manipulating PORTB
+  SPI.transfer((r & 0x1F) | 0x00); // Note the 0x00 instead of 0x20
+  byte v = SPI.transfer(0x00); // Send a dummy byte to receive the value
+  digitalWrite(CE, HIGH); // Use digitalWrite instead of manipulating PORTB
+  return v;
+}
+
 void powerUp(void)
 {
   setRegister(_NRF24_CONFIG, getRegister(_NRF24_CONFIG) | 0x02);

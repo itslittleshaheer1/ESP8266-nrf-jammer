@@ -1,14 +1,14 @@
       NRF24L01 Module
-   +---------------+
-   |               |
-   |       VCC -> 3.3V
-GND -> GND
-CE -> D1
-CSN -> D2
-SCK -> D5
-MOSI -> D7
-MISO -> D6
-IRQ -> D4 (optional) (optional, used for interrupt)
-   |               |
-   +---------------+
++---------------+
+|               |
+   VCC -> 3.3V
+   GND -> GND
+   CE -> D1
+   CSN -> D2
+   SCK -> D5
+   MOSI -> D7
+   MISO -> D6
+   IRQ -> D4 (optional) (optional, used for interrupt)
+|               |
++---------------+
 made by littleshaheerswabi

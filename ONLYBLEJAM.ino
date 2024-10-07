@@ -1,103 +1,159 @@
 #include <SPI.h>
-#include <nRF24L01.h>
 #include <RF24.h>
+#include <nRF24L01.h>
 
-#define CE  1
-RF24 radio(1, 2);
+#define CE_PIN D1 // GPIO 5
+#define CSN_PIN D2 // GPIO 4
 
-#define CHANNELS  64
-int channel[CHANNELS];
+RF24 radio(CE_PIN, CSN_PIN);
 
-int line;
+#define BLUETOOTH_CHANNELS 79 // Bluetooth uses channels 0-78
+int channel[BLUETOOTH_CHANNELS];
 
-const uint8_t num_channels = 64;
-int values[num_channels];
+char grey[] = " .:-=+*aRW";
+
+#define _NRF24_CONFIG      0x00
+#define _NRF24_EN_AA       0x01
+#define _NRF24_EN_RXADDR   0x02
+#define _NRF24_RF_CH       0x05
+#define _NRF24_RF_SETUP    0x06
+#define _NRF24_RPD         0x09
+
+#define BT1 D4 // GPIO 2
+#define BT2 D3 // GPIO 0
+
 int channels = 0;
-const byte address[6] = "00001";
-const int num_reps = 50;
-bool jamming = true;
-
-void setup()
-{
-  Serial.begin(57600);
-
-  radio.begin();
-  radio.startListening();
-  radio.stopListening();
-
-  SPI.begin();
-  SPI.setDataMode(SPI_MODE0);
-  SPI.setClockDivider(SPI_CLOCK_DIV2);
-  SPI.setBitOrder(MSBFIRST);
-
-  pinMode(CE, OUTPUT);
-  disable();
-
-  powerUp();
-
-#define _NRF24_EN_AA 0x01
-#define _NRF24_CONFIG 0x00
-#define _NRF24_RF_SETUP 0x06
-#define _NRF24_RPD 0x09
-
-  Serial.println("Starting Jamming...");
-}
-
-void setRegister(byte r, byte v)
-{
-  digitalWrite(CE, LOW); // Use digitalWrite instead of manipulating PORTB
-  SPI.transfer((r & 0x1F) | 0x20);
-  SPI.transfer(v);
-  digitalWrite(CE, HIGH); // Use digitalWrite instead of manipulating PORTB
-}
+bool jamming = false;
 
 byte getRegister(byte r) {
-  digitalWrite(CE, LOW); // Use digitalWrite instead of manipulating PORTB
-  SPI.transfer((r & 0x1F) | 0x00); // Note the 0x00 instead of 0x20
-  byte v = SPI.transfer(0x00); // Send a dummy byte to receive the value
-  digitalWrite(CE, HIGH); // Use digitalWrite instead of manipulating PORTB
-  return v;
+    byte c;
+    digitalWrite(CSN_PIN, LOW);
+    c = SPI.transfer(r & 0x1F);
+    c = SPI.transfer(0);
+    digitalWrite(CSN_PIN, HIGH);
+    return c;
 }
 
-void powerUp(void)
-{
-  setRegister(_NRF24_CONFIG, getRegister(_NRF24_CONFIG) | 0x02);
-  delayMicroseconds(130);
+void setRegister(byte r, byte v) {
+    digitalWrite(CSN_PIN, LOW);
+    SPI.transfer((r & 0x1F) | 0x20);
+    SPI.transfer(v);
+    digitalWrite(CSN_PIN, HIGH);
 }
 
-void powerDown(void)
-{
-  setRegister(_NRF24_CONFIG, getRegister(_NRF24_CONFIG) & ~0x02);
+void setup() {
+    Serial.begin(57600);
+    radio.begin();
+    radio.startListening();
+    radio.stopListening();
+
+    pinMode(BT1, INPUT_PULLUP);
+    pinMode(BT2, INPUT_PULLUP);
+
+    attachInterrupt(digitalPinToInterrupt(BT1), pressBt01, FALLING);
+    attachInterrupt(digitalPinToInterrupt(BT2), pressBt02, FALLING);
+
+    for (int count = 0; count < BLUETOOTH_CHANNELS; count++) {
+        channel[count] = 0;
+    }
+
+    Serial.println("Starting Bluetooth Channel Scanner ...");
+    Serial.println();
+
+    SPI.begin();
+    SPI.setDataMode(SPI_MODE0);
+    SPI.setClockDivider(SPI_CLOCK_DIV2);
+    SPI.setBitOrder(MSBFIRST);
+
+    pinMode(CE_PIN, OUTPUT);
+    disable();
+    powerUp();
+    setRegister(_NRF24_EN_AA, 0x0);
+    setRegister(_NRF24_RF_SETUP, 0x0F);
 }
 
-void enable(void)
-{
-  digitalWrite(CE, HIGH); // Use digitalWrite instead of manipulating PORTB
+void powerUp(void) {
+    setRegister(_NRF24_CONFIG, getRegister(_NRF24_CONFIG) | 0x02);
+    delayMicroseconds(130);
 }
 
-void disable(void)
-{
-  digitalWrite(CE, LOW); // Use digitalWrite instead of manipulating PORTB
+void disable(void) {
+    digitalWrite(CE_PIN, LOW);
 }
 
-void setRX(void)
-{
-  setRegister(_NRF24_CONFIG, getRegister(_NRF24_CONFIG) | 0x01);
-  enable();
+void enable(void) {
+    digitalWrite(CE_PIN, HIGH);
+}
 
-  delayMicroseconds(100);
+void scanBluetoothChannels(void) {
+    disable();
+    for (int j = 0; j < 255; j++) { // Perform multiple scans
+        for (int i = 0; i < BLUETOOTH_CHANNELS; i++) {
+            setRegister(_NRF24_RF_CH, i); // Set to Bluetooth channel
+            enable();
+            delayMicroseconds(40);
+            disable();
+            if (getRegister(_NRF24_RPD) > 0) channel[i]++; // Check for signal
+        }
+    }
+}
+
+void outputBluetoothChannels(void) {
+    int norm = 0;
+    for (int i = 0; i < BLUETOOTH_CHANNELS; i++)
+        if (channel[i] > norm) norm = channel[i];
+
+    Serial.print('|');
+    for (int i = 0; i < BLUETOOTH_CHANNELS; i++) {
+        int pos;
+        if (norm != 0) pos = (channel[i] * 10) / norm;
+        else pos = 0;
+
+        if (pos == 0 && channel[i] > 0) pos++;
+        if (pos > 9) pos = 9;
+
+        Serial.print(grey[pos]);
+        channel[i] = 0; // Reset for next scan
+    }
+    Serial.print("| ");
+    Serial.println(norm);
 }
 
 void jammer() {
-  const char text[] = "xxxxxxxxxxxxxxxx"; // send the noise
-  for (int i = ((channels * 5) + 1); i < ((channels * 5) + 23); i++) {
-    radio.setChannel(i);
-    radio.write(&text, sizeof(text));
-  }
+    const char text[] = "xxxxxxxxxxxxxxxx"; // Noise data to send
+    for (int i = 0; i < BLUETOOTH_CHANNELS; i++) {
+        radio.setChannel(i); // Jam all Bluetooth channels
+        radio.write(&text, sizeof(text));
+    }
 }
 
-void loop()
-{
-  jammer();
-  delay(100);
+void pressBt01() {
+    static unsigned long last_interrupt_time = 0;
+    unsigned long interrupt_time = millis();
+    if (interrupt_time - last_interrupt_time > 200) {
+        if (channels < 13) {
+            channels++;
+        } else {
+            channels = 0;
+        }
+    }
+    last_interrupt_time = interrupt_time;
+}
+
+void pressBt02() {
+    jamming = !jamming; // Toggle jamming state
+    delay(200); // Debounce delay
+}
+
+void loop() {
+    Serial.print("Channel: ");
+    Serial.println(channels + 1);
+
+    if (jamming) {
+        Serial.print("JAMMING BLUETOOTH CHANNELS ");
+        jammer(); // Call the jamming function
+    } else {
+        scanBluetoothChannels();
+        outputBluetoothChannels();
+    }
 }

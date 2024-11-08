@@ -1,14 +1,18 @@
       NRF24L01 Module
 +---------------+
 |               |
-   VCC -> 3.3V
-   GND -> GND
-   CE -> D1
-   CSN -> D2
-   SCK -> D5
-   MOSI -> D7
-   MISO -> D6
-   IRQ -> D4 (optional) (optional, used for interrupt)
+   Pin Configuration:
+
+GND      -> G
+VCC      -> 3V
+CE       -> D8
+CSN      -> D7
+SCK      -> D4
+MISO     -> D2
+MOSI     -> D1
+
+Additional Setup:
+- Place a 10 µF capacitor between VCC and GND.
 |               |
 +---------------+
 made by littleshaheerswabi

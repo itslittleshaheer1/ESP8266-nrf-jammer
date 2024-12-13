@@ -6,10 +6,10 @@
 GND      -> G
 VCC      -> 3V
 CE       -> D8
-CSN      -> D7
+CSN      -> D6
 SCK      -> D4
 MISO     -> D2
-MOSI     -> D1
+MOSI     -> D0
 
 Additional Setup:
 - Place a 10 µF capacitor between VCC and GND.
